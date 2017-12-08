@@ -6,10 +6,10 @@ return [
 
          'db' => [
             'driver'    => 'mysql',
-            'host'      => 'localhost',
+            'host'      => 'mysql',
             'database'  => 'altershift',
-            'username'  => 'root',
-            'password'  => 'root',
+            'username'  => 'altershift',
+            'password'  => 'jtrsiLl2VuaGNDPO',
             'charset'   => 'utf8',
             'collation' => 'utf8_unicode_ci',
             'prefix'    => '',
