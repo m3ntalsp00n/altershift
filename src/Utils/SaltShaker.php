@@ -3,11 +3,10 @@ namespace Utils;
 
 class SaltShaker {
 	public static function shake($password) {
-		
-		$salt = bin2hex(mcrypt_create_iv(32, MCRYPT_DEV_URANDOM)); //get 256 random bits in hex
+		$salt = bin2hex(openssl_random_pseudo_bytes(32));
 		$hash = hash("sha256", $salt . $password); //prepend the salt, then hash
 		//store the salt and hash in the same string, so only 1 DB column is needed
-		$final = $salt . $hash; 
+		$final = $salt . $hash;
 		
 		return $final;
 	}

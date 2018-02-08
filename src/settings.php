@@ -6,10 +6,10 @@ return [
 
          'db' => [
             'driver'    => 'mysql',
-            'host'      => 'mysql',
-            'database'  => 'altershift',
-            'username'  => 'altershift',
-            'password'  => 'jtrsiLl2VuaGNDPO',
+            'host'      => 'localhost',
+            'database'  => 'altejdon_altershift',
+            'username'  => 'altejdon_admin',
+            'password'  => 'phrubatHuec4',
             'charset'   => 'utf8',
             'collation' => 'utf8_unicode_ci',
             'prefix'    => '',

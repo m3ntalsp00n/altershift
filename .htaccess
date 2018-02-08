@@ -1,5 +1,7 @@
 <IfModule mod_rewrite.c>
   RewriteEngine on
+  #RewriteBase /app
+
   RewriteCond %{REQUEST_FILENAME} !-f
   # Has to be in the approot for openshift v3
   RewriteRule ^(.*)$ public/index.php [QSA,L]

@@ -12,4 +12,12 @@ class RecurringBookings extends Eloquent {
 	protected $table = 'recurring_bookings';
 
 	protected $hidden = ['created_at', 'updated_at'];
+
+    public function booking() {
+		return $this->hasMany(
+			'Models\Booking',
+			'recurring_bookings_id',
+			'id'
+		);
+	}
 }

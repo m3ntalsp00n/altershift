@@ -18,6 +18,16 @@ $container['logger'] = function ($c) {
     return $logger;
 };
 
+$container['environment'] = function () {
+    // Fix the Slim 3 subdirectory issue (#1529)
+    // This fix makes it possible to run the app from localhost/slim3-app
+    $scriptName = $_SERVER['SCRIPT_NAME'];
+    $_SERVER['REAL_SCRIPT_NAME'] = $scriptName;
+    $_SERVER['SCRIPT_NAME'] = dirname(dirname($scriptName)) . '/' . basename($scriptName);
+    return new Slim\Http\Environment($_SERVER);
+};
+
+
 $capsule = new \Illuminate\Database\Capsule\Manager;
 $capsule->addConnection($container['settings']['db']);
 $capsule->setAsGlobal();

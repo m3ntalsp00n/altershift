@@ -11,11 +11,12 @@ class Booking extends Eloquent {
 	 */
 	protected $table = 'bookings';
 
-	protected $hidden = ['created_at', 'updated_at', 'services_id', 'services_detail_id'];
-
-	// public function servicesDetails() {
-	// 	return $this->hasManyThrough('Models\ServicesDetails',  'Models\Services');
-	// }
+	protected $hidden = [
+        'created_at', 
+        'updated_at', 
+        'services_id', 
+        'services_detail_id'
+        ];
 
 	// Reserved, Confirmed, Canceled, Served
 	public function services() {
@@ -37,8 +38,24 @@ class Booking extends Eloquent {
 	public function recurring() {
 		return $this->hasOne(
 			'Models\RecurringBookings',
-			'bookings_id',
+			'booking_id',
 			'id'
+		);
+	}
+
+    public function exceptions() {
+        return $this->hasMany(
+            'Models\BookingExceptions',
+            'booking_id',
+            'id'
+        );
+    }
+
+	public function users() {
+		return $this->hasOne(
+			'Models\User',
+			'id',
+			'users_id'
 		);
 	}
 }
