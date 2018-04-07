@@ -11,9 +11,13 @@ class Availability extends Eloquent {
 	 */
 	protected $table = 'availability';
 
-	protected $hidden = ['services_id', 'services_users_id', 'users_id'];
+	protected $hidden = ['services_users_id', 'users_id'];
 
 	public function servicesDetails() {
 		return $this->hasManyThrough('Models\ServicesDetails',  'Models\Services');
 	}
+
+    public function services() {
+        return $this->hasOne('Models\Services', 'id', 'services_id');
+    }
 }

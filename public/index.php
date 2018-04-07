@@ -14,6 +14,8 @@ use Models\Booking;
 use Models\Cache;
 use Models\RecurringBookings;
 use Models\BookingExceptions;
+use Models\PublicHolidays;
+use Models\Timeoff;
 use Utils\SaltShaker;
 use \Firebase\JWT\JWT;
 
@@ -31,7 +33,6 @@ $capsule->setAsGlobal();
 $capsule->bootEloquent();
 
 const KEY_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
-
 
 function refreshKeys($cache) {
     $ch = curl_init();
@@ -198,6 +199,16 @@ $app->post('/api/staffServices', function (Request $request, Response $response)
     );    
 });
 
+$app->post('/api/staffAvailability', function (Request $request, Response $response) {
+    $data = json_decode($request->getBody(), true);
+
+    return $response->withJson(
+        Availability::
+              where('availability.users_id', '=', $data['uid'])
+              ->get()
+    );    
+});
+
 function cmp($a, $b){
     return (strtotime($a["start"]) - strtotime($b["start"]));
 }
@@ -360,6 +371,59 @@ $app->post('/api/getUserBookings', function (Request $request, Response $respons
     );
 });
 
+$app->post('/api/timeOff', function (Request $request, Response $response) {
+    $data = json_decode($request->getBody(), true);
+    
+    // get public holidays
+    $holidays = PublicHolidays::get();
+
+    $timeoff = Timeoff::get();
+    
+
+    return $response->withJson(
+        array(
+            'publicHolidays' => $holidays,
+            'timeoff' => $timeoff
+        )
+    );
+});
+
+$app->post('/api/addTimeoff', function (Request $request, Response $response) {
+    $data = json_decode($request->getBody(), true);
+
+    $record = new Timeoff();
+
+    $record->date = $data['date'];
+    $record->name = $data['name'];
+    $record->users_id = $data['uid'];
+
+    $record->save();
+
+    // remove and send cancelation email to user
+
+
+    // cancel bookings
+    return $response->withJson(array('status' => 'success', 'data' => null, 'message' => null)); 
+});
+
+$app->post('/api/removeTimeoff', function (Request $request, Response $response) {
+    $data = json_decode($request->getBody(), true);
+
+    $record = Timeoff::where('users_id', '=', $data['uid'])
+            ->where('date', '=', $data['date'])
+            ->delete();
+
+    return $response->withJson(array('status' => 'success', 'data' => $record, 'message' => null)); 
+});
+
+function find_date($public_holidays, $date) {
+    foreach ($public_holidays as $holiday) {
+        if (strcmp($holiday['date'], $date) == 0)
+            return true;
+    }
+    return false;
+}
+
 $app->post('/api/getAvailability', function (Request $request, Response $response) {
     $data = json_decode($request->getBody(), true);
 
@@ -378,6 +442,11 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
                 ->whereBetween('start', array($data['start_date'], $data['end_date']))
                 ->get();
 
+    $public_holidays = PublicHolidays::get();
+
+    $timeoff = Timeoff::where('users_id', '=', $services[0]['users_id'])
+            ->get();
+
     // get todays date, then + 30 days
     $begin = new DateTime();
     // same with end
@@ -392,7 +461,9 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
     {
         $availability[(int)$avail['repeat_weekday']] = array(
             "start" => $avail['start'],
-            "end"   => $avail['end']
+            "end"   => $avail['end'],
+            "break_start" => $avail['break_start'],
+            "break_end" => $avail['break_end']
         );
     }
 
@@ -412,6 +483,13 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
         // i.e. 18-11-2017
         // get the dates, Day Of Week
         $dow = $i->format('w');
+
+        // if the date falls on a public holiday - next!
+        if (find_date($public_holidays, $i->format('Y-m-d')))
+            continue;
+
+        if (find_date($timeoff, $i->format('Y-m-d')))
+            continue;
 
         // for each service time, we need to loop and check its times
 
@@ -435,9 +513,20 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
                 $i->setTime($timeHours[0], $timeHours[1]);
                 $end_time = new DateTime($i_formatted . ' ' . $availability[$dow]['end']);
 
+                $break_start = new DateTime($i_formatted . ' ' . $availability[$dow]['break_start']);
+                $break_end = new DateTime($i_formatted . ' ' . $availability[$dow]['break_end']);
+
                 // from start loop to end time, add service running time each loop
                 while ($i < $end_time)
                 {   
+                    // if in break, skip over
+                    if ($i >= $break_start && $i < $break_end){
+                        
+                        $i->add(new DateInterval('PT' . $inter['time'] . 'M'));
+                        // skip
+                        continue;
+                    }
+
                     $hit = 0;
 
                     // got thru every booking and compare start date/times
@@ -512,7 +601,9 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
                                         }
 
                                         if ($hit >= $capacity)
+                                        {
                                             break;
+                                        }
                                     }
                                 }
                             }
@@ -575,20 +666,7 @@ $app->post('/api/cancelBooking', function (Request $request, Response $response)
 $app->post('/api/makeBooking', function (Request $request, Response $response) {
 
     $data = json_decode($request->getBody(), true);
-    // get token
-    // explode off 'Bearer' from the token
-    // $auth = explode(" ", $request->getHeader('Authorization')[0]);
-    // $secret = "supersecretkeyyoushouldnotcommittogithub"; // fixme
-
-    // $decode = JWT::decode($auth[1], $secret, array("HS256"));
-
-// check detailsssss
-// 
-// 
-//
-    // if (!$data['date'])
-    //     return $response->withJson(array('status' => 'error', 'data' => null, 'message' => 'Not all booking details present'), 400);
-
+    
     $service_detail = ServicesDetails::where('id', $data['services_detail_id'])->get()->first();
 
     $date = new DateTime($data['date']);
@@ -751,6 +829,116 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
     } else {
         return $response->withJson(array('status' => 'error', 'data' => 'Failed to confirm booking: ' . $mail->ErrorInfo, 'message' => NULL), 400); 
     }
+});
+
+
+
+$app->post('/api/updateAvailability', function (Request $request, Response $response) {
+
+    $data = json_decode($request->getBody(), true);
+
+    // going to come in as Mon.startTime
+    $error = [];
+    // need uid, service_id, availabilities
+
+    if (!$data)
+        return $response->withJson(array('status' => 'error', 'data' => 'No data', 'message' => NULL), 400); 
+
+    // iterate through all data and process
+    $uid = $data['uid'];
+    $serviceId = $data['serviceId'];
+
+    // get all where uid
+    $current_avail = Availability::
+        with('services')
+        ->where(
+            'users_id', '=', $uid 
+        )->get();
+
+    $output = array(0 => [], 1 => [], 2 => [], 3 => [], 4 => [], 5 => [], 6 => []);
+
+    foreach ($data['availability'] as $value) 
+    {
+        $conflict_record = null;
+        $dow = date('w', strtotime($value["name"]));
+        if ($value['checked'])
+        {            
+            $flag_conflict = false;
+            $new_start = date('H:m:s', strtotime($value['start']));
+            $new_end   = date('H:m:s', strtotime($value['end']));
+            $matching_record = null;
+
+            if ($current_avail) {
+                foreach ($current_avail as $avail) {
+                    if ($avail['repeat_weekday'] == $dow && $flag_conflict == false) {
+
+                        // ignore this dow and this service id
+                        if ($avail['services_id'] != $serviceId) {
+                            // make sure times don't clash
+                            $current_start = date('H:m:s', strtotime($avail['start']));
+                            $current_end   = date('H:m:s', strtotime($avail['end']));
+
+                            if ($new_start > $current_start && $new_end < $current_end)
+                            {
+                                $flag_conflict = true;
+                            }
+                            else if ($new_start < $current_start && $new_end > $current_start)
+                            {
+                                $flag_conflict = true;
+                            }
+                            if ($flag_conflict)
+                                $conflict_record = $avail;
+
+                        }  else {
+                            $matching_record = $avail;
+                        }
+                    }
+                }
+            }
+            // if no clash then do update
+            if ($flag_conflict == false) {
+                // do we need to update this one anyway?
+                // compare to existing entry, if no different don't update
+                $record = Availability::find($matching_record['id']);
+
+                if (!$record) {
+                    // new record
+                    $record = new Availability;
+                }
+
+                $record->start = $value['start'];
+                $record->end = $value['end'];
+                $record->break_start = $value['break'];
+                $record->break_end = $value['break_end'];
+                $record->services_id = $serviceId;
+                $record->users_id = $uid;
+                $record->repeat_weekday = $dow;
+
+                $record->save();
+            } else {
+
+                // error msg
+                array_push($error, "Conflict: " . $value['name'] . 
+                        " clashes with " . $conflict_record['services']['name'] . " " . date('D', strtotime("Sunday +{$conflict_record['repeat_weekday']} days")) . " start: " . 
+                        $conflict_record['start'] . " end: " . $conflict_record['end']);
+            }
+        } else {
+            // check that false values don't exist in the table
+            foreach ($current_avail as $avail) {
+                if ($avail['services_id'] == $serviceId &&
+                    $avail['repeat_weekday'] == $dow) {
+                    // remove entry as it's disabled
+                    Availability::destroy($avail['id']);
+                }
+            }
+        }
+    }
+
+    if (count($error) != 0) {
+        return $response->withJson(array('status' => 'error', 'data' => $error ), 400);
+    }
+
+    return $response->withJson(array('status' => 'success', 'data' => '' ));
 });
 
 $app->run(); 
