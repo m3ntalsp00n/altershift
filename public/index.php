@@ -194,7 +194,7 @@ $app->post('/api/staffServices', function (Request $request, Response $response)
                 with('availability')
               ->with('users')
               ->with('servicesDetail')
-              ->where('services.users_id', '=', $data['uid'])
+              ->where('users_id', '=', $data['uid'])
               ->get()
     );    
 });
@@ -244,23 +244,28 @@ $app->post('/api/getStaffBookings', function (Request $request, Response $respon
         foreach ($_bookings as $book) {
             $date = new DateTime($book['date'] . ' ' . $book['start']);
             
+            // fixme --- slow
+            if ($book['services']['users_id'] != $data['users_id'])
+                continue;
+
             // test if it is recurring first
             if ($dt->format('Y-m-d') == $date->format('Y-m-d')) {
                 $b_date = $date->format('Y-m-d');
                 $b_time = $date->format('H:i:s');
 
                 $record_data = [
-                    "start"  => $book["start"],
+                    "start"  => $book['start'],
                     "finish" => $book['finish'],
                     "client" => $book['users']['name'],
-                    "type"   => $book['services']['name']
+                    "type"   => $book['services']['name'],
+                    "notes"  => $book['notes']
                 ];
 
                 $record = 
                     [
                         "date" => $date->format('Y-m-d'),
                         "data" => [$record_data]
-                ];
+                    ];
                 // look for existing date
                 foreach($bookings as $key => $b) {
                     if (isset($b['date']) && $b['date'] == $date->format('Y-m-d'))
@@ -373,11 +378,13 @@ $app->post('/api/getUserBookings', function (Request $request, Response $respons
 
 $app->post('/api/timeOff', function (Request $request, Response $response) {
     $data = json_decode($request->getBody(), true);
-    
+
     // get public holidays
     $holidays = PublicHolidays::get();
 
-    $timeoff = Timeoff::get();
+    $timeoff = Timeoff::
+        where('users_id', $data['uid'])
+        ->get();
     
 
     return $response->withJson(
@@ -555,17 +562,21 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
                                     $hit++;
                                 }
                             }
-                            else if ($i >= $book_start) {
-                                if ($i_end <= $book_end) {
-                                    $hit++;
-                                    // break;
-                                }   
+                            else if ($i >= $book_start && $i_end <= $book_end) {
+                                $hit++;
+                                // break;
                             }
-                            else if ($i >= $book_start && $i_end <= $book_end)
+                            else if (($i >= $book_start && $i < $book_end) && $i_end >= $book_end)
                             {
                                 $hit++;
                                 // break;
                             }
+                            else if ($i < $book_start && $i_end < $book_end && $i_end > $book_start)
+                            {
+                                $hit++;
+                                // break;
+                            }
+
                             if ($hit >= $capacity)
                             {
                                 break;
@@ -616,6 +627,7 @@ $app->post('/api/getAvailability', function (Request $request, Response $respons
                         array_push($availability_list[$key]['availability'][$i_formatted], $i->format('H:i:s'));
                     }
                     $i->add(new DateInterval('PT' . $inter['time'] . 'M'));
+                    // $i->add(new DateInterval('PT15M'));
                 }
             }
         }
@@ -670,6 +682,8 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
     $service_detail = ServicesDetails::where('id', $data['services_detail_id'])->get()->first();
 
     $date = new DateTime($data['date']);
+
+    $date_print = clone $date;
 
     $numBooked = Booking::
                     where('date', $date->format('Y-m-d'))
@@ -749,6 +763,7 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
     $booking->end = $date->format('H:i:s');
     $booking->date = $date->format('Y-m-d');
     $booking->status = $data['frequency'] > 0 ? 'R' : 'A';
+    $booking->notes = $data['notes'];
     $booking->save();
 
     // create recurring object
@@ -797,7 +812,7 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
                         <body>
                         <p>
                         Your booking is confirmed. <br/>
-                        On ' . $date->format('l (d-m-Y)') . ' at <b>' . $date->format('g:ia') .
+                        On ' . $date_print->format('l (d-m-Y)') . ' at <b>' . $date_print->format('g:ia') .
                         '</b> with '. $service['users']['name'] . ' for
                         ' . $service['name'] . '<br/>
                         </p><p>
@@ -812,10 +827,10 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
                         <body>
                         <p>
                         Your recurring booking is confirmed. <br/>
-                        On first appointment is ' . $date->format('l (d-m-Y)') . ' at <b>' . $date->format('g:ia') .
+                        On first appointment is ' . $date_print->format('l (d-m-Y)') . ' at <b>' . $date_print->format('g:ia') .
                         '</b> with '. $service['users']['name'] . ' for
                         ' . $service['name'] . '<br/>
-                        This appointment will occur every ' . $date->format('l') . '
+                        This appointment will occur every ' . $date_print->format('l') . '
                         </p><p>
                         You may cancel up until 12 hours before the booking start time. 
                         For cancellations within this time please contact Alternature.
