@@ -248,37 +248,107 @@ $app->post('/api/getStaffBookings', function (Request $request, Response $respon
             if ($book['services']['users_id'] != $data['users_id'])
                 continue;
 
-            // test if it is recurring first
-            if ($dt->format('Y-m-d') == $date->format('Y-m-d')) {
-                $b_date = $date->format('Y-m-d');
-                $b_time = $date->format('H:i:s');
+            if ($dt->format('Y-m-d') != $date->format('Y-m-d')) 
+                continue;
 
-                $record_data = [
-                    "start"  => $book['start'],
-                    "finish" => $book['finish'],
-                    "client" => $book['users']['name'],
-                    "type"   => $book['services']['name'],
-                    "notes"  => $book['notes']
-                ];
+            switch ($book['status'])
+            {
+                case 'A': // active
+                    // if ($dt->format('Y-m-d') == $date->format('Y-m-d')) {
+                        $b_date = $date->format('Y-m-d');
+                        $b_time = $date->format('H:i:s');
 
-                $record = 
-                    [
-                        "date" => $date->format('Y-m-d'),
-                        "data" => [$record_data]
-                    ];
-                // look for existing date
-                foreach($bookings as $key => $b) {
-                    if (isset($b['date']) && $b['date'] == $date->format('Y-m-d'))
-                    {
-                        // add to this object
-                        array_push($bookings[$key]['data'], $record_data);
-                        goto loop;
-                        // ??? bail
-                    } 
+                        $record_data = [
+                            "id"         => $book['id'],
+                            "start"      => $book['date'] . ' ' .$book['start'],
+                            "finish"     => $book['date'] . ' ' .$book['end'],
+                            "client"     => $book['users']['name'],
+                            "type"       => $book['services']['name'],
+                            "notes"      => $book['notes'],
+                            "status"     => $book['status']
+                        ];
+
+                        $record = 
+                            [
+                                "date" => $date->format('Y-m-d'),
+                                "data" => [$record_data]
+                            ];
+                        // look for existing date
+                        foreach($bookings as $key => $b) {
+                            if (isset($b['date']) && $b['date'] == $date->format('Y-m-d'))
+                            {
+                                // add to this object
+                                array_push($bookings[$key]['data'], $record_data);
+                                goto loop;
+                                // ??? bail
+                            } 
+                        }
+
+                        array_push($bookings, $record);
+                        loop:;
+                    // }
+                    break;
+                case 'R': // recurring
+                {
+                        $txt_dow = date('D', strtotime("Sunday +{$book['recurring']['day_of_week']} days"));
+                        $begin = new DateTime("this $txt_dow");
+
+                        $b_explode = explode(":", $book['start']);
+                        $begin->setTime($b_explode[0], $b_explode[1], $b_explode[2]);
+
+                        $end = clone $begin;
+                        $end->modify('+ 30 days');
+
+                        for ($i = $begin; $i <= $end; $i->modify('+ 7 days'))
+                        {
+                            // print($i->format('Y-m-d H:i:s'));
+                            $hit_exception = true;
+                            // if there are exceptions, compare the date time and don't add
+                            foreach ($book['exceptions'] as $exception) {
+                                $d = new DateTime($exception['date'] . ' ' . $exception['start']);
+                                if ($d == $i) {
+                                    $hit_exception = false;
+                                    break;
+                                }
+                            }
+
+                            if ($hit_exception) {
+
+                                $record_data = [
+                                    "id" => $book['id'],
+                                    "start" => $i->format('Y-m-d H:i:s'),
+                                    "finish" => (new DateTime($i->format('Y-m-d') . ' ' . 
+                                        $book['end']))->format('Y-m-d H:i:s'),
+                                    "status" => $book['status'],
+                                    "users_id" => $book['users_id'],
+                                    "client"     => $book['users']['name'],
+                                    "services" => $book['services'],
+                                    "services_detail" => $book['servicesDetail'],
+                                    "type"       => $book['services']['name'],
+                                    "notes"      => $book['notes']
+                                ];
+
+                                $record = 
+                                [
+                                    "date" => $i->format('Y-m-d'),
+                                    "data" => [$record_data]
+                                ];
+                                // look for existing date
+                                foreach($bookings as $key => $b) {
+                                    if (isset($b['date']) && $b['date'] == $i->format('Y-m-d'))
+                                    {
+                                        // add to this object
+                                        array_push($bookings[$key]['data'], $record_data);
+                                        goto loop2;
+                                        // ??? bail
+                                    } 
+                                }
+
+                                array_push($bookings, $record);
+                                loop2:;
+                            }
+                        }
                 }
-
-                array_push($bookings, $record);
-                loop:;
             }
         }
     }
@@ -642,6 +712,7 @@ $app->post('/api/cancelBooking', function (Request $request, Response $response)
     //({"cancelType": type, "booking": item}
     // lookup the booking, if recurring we have more work to do
     $booking = $data['booking'];
+  
     switch ($data['cancelType']) {
         case 0:
             Booking::where('id', $booking['id'])->update(['status' => 'C']);
@@ -671,8 +742,58 @@ $app->post('/api/cancelBooking', function (Request $request, Response $response)
 
     // // maybe resend email?
     // return $response->withJson(array('status' => 'success', 'data' => null, 'message' => 'Appointment cancelled')); 
+    $mail = new PHPMailer;
+    $mail->isSMTP();
+    $mail->Host = 'mail.alternature.com.au';
+    $mail->Port = 587;
+    $mail->SMTPAuth = true;
+    $mail->SMTPSecure = "tls"; 
+    $mail->Username = 'automated-email@alternature.com.au';
+    $mail->Password = 'RocmagBalEf5';
 
-    return $response->withJson(array('status' => 'success', 'data' => $data, 'message' => 'Appointment cancelled')); 
+    $book = Booking::with('services')->where('id', $booking['id'])->get()->first();
+    $date_print = DateTime::createFromFormat('Y-m-d H:i:s', $booking['start']);
+
+    $mail->setFrom('automated-email@alternature.com.au', 'Mailer');
+    $userdata = User::where('id', '=', $book['users_id'])->get()->first();
+    $mail->addAddress($userdata['email'], $userdata['name']);
+
+    $mail->isHTML(true);
+    $mail->Subject = 'Alternature - Booking Cancellation';
+
+    if ($data['booking']['status'] == 'A') {
+        $mail->Body = ' <html>
+                        <body>
+                        <p>
+                        Your appointment has been cancelled. <br/>
+                        The appointment was ' . $date_print->format('l (d-m-Y)') . ' at <b>' . $date_print->format('g:ia') .
+                        '</b> with '. $book['services']['users']['name'] . ' for
+                        ' . $book['services']['name'] . '<br/>
+                        </p>
+                        </body>
+                        </html>
+                        ';
+    } else {
+        $mail->Body = ' <html>
+                        <body>
+                        <p>
+                        Your recurring booking has been cancelled. <br/>
+                        The first appointment was ' . $date_print->format('l (d-m-Y)') . ' at <b>' . $date_print->format('g:ia') .
+                        '</b> with '. $book['services']['users']['name'] . ' for
+                        ' . $book['services']['name'] . '<br/>
+                        This appointment occurred every ' . $date_print->format('l') . '
+                        </p>
+                        </body>
+                        </html>
+                        ';
+    }
+    if ($mail->send()) {
+        return $response->withJson(array('status' => 'success', 'data' => $data, 'message' => 'Appointment cancelled')); 
+    } else {
+        return $response->withJson(array('status' => 'error', 'data' => 'Failed to cancel booking: ' . $mail->ErrorInfo, 'message' => NULL), 400); 
+    }
+
+    // return $response->withJson(array('status' => 'success', 'data' => $data, 'message' => 'Appointment cancelled')); 
 });
 
 $app->post('/api/makeBooking', function (Request $request, Response $response) {
@@ -763,7 +884,10 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
     $booking->end = $date->format('H:i:s');
     $booking->date = $date->format('Y-m-d');
     $booking->status = $data['frequency'] > 0 ? 'R' : 'A';
-    $booking->notes = $data['notes'];
+    if (array_key_exists('notes', $data))
+        $booking->notes = $data['notes'];
+    else
+        $booking->notes = null;
     $booking->save();
 
     // create recurring object
@@ -812,9 +936,7 @@ $app->post('/api/makeBooking', function (Request $request, Response $response) {
                         <body>
                         <p>
                         Your booking is confirmed. <br/>
-                        On ' . $date_print->format('l (d-m-Y)') . ' at <b>' . $date_print->format('g:ia') .
-                        '</b> with '. $service['users']['name'] . ' for
-                        ' . $service['name'] . '<br/>
+              
                         </p><p>
                         You may cancel up until 12 hours before the booking start time. 
                         For cancellations within this time please contact Alternature.
